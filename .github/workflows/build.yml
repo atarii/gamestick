@@ -1,0 +1,25 @@
+name: Build Embedded Diagnostic
+on: [push]
+
+jobs:
+  build_armv7:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install ARM Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf
+
+      - name: Compile Static Binary
+        run: |
+          # -static ensures no missing library errors on the handheld
+          arm-linux-gnueabihf-gcc -static -march=armv7-a sysinfo.c -o sysinfo_arm
+
+      - name: Upload Diagnostic Tool
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-tool
+          path: sysinfo_arm
