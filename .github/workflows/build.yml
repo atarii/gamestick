@@ -15,8 +15,8 @@ jobs:
 
       - name: Compile Static Binary
         run: |
-          # -static ensures no missing library errors on the handheld
-          arm-linux-gnueabihf-gcc -static -march=armv7-a sysinfo.c -o sysinfo_arm
+          # Added -mfloat-abi=softfp and -mfpu=vfpv3-d16 for better compatibility
+          arm-linux-gnueabihf-gcc -static -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 sysinfo.c -o sysinfo_arm
 
       - name: Upload Diagnostic Tool
         uses: actions/upload-artifact@v4
