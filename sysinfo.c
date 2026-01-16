@@ -1,11 +1,15 @@
-#include <SDL/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdarg.h>
+#include <stdint.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <linux/fb.h>
+#include <stdarg.h>
 
-// Simple 8x8 font bitmap for ASCII 32-127
-static const unsigned char font8x8[96][8] = {
+// 8x8 font bitmap (ASCII 32-127)
+static const uint8_t font8x8[96][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, {0x18,0x3c,0x3c,0x18,0x18,0x00,0x18,0x00}, // space, !
     {0x6c,0x6c,0x6c,0x00,0x00,0x00,0x00,0x00}, {0x6c,0x6c,0xfe,0x6c,0xfe,0x6c,0x6c,0x00}, // ", #
     {0x18,0x3e,0x60,0x3c,0x06,0x7c,0x18,0x00}, {0x00,0xc6,0xcc,0x18,0x30,0x66,0xc6,0x00}, // $, %
@@ -40,18 +44,22 @@ static const unsigned char font8x8[96][8] = {
     {0x10,0x38,0x6c,0xc6,0x00,0x00,0x00,0x00}, {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xff}, // ^, _
 };
 
-SDL_Surface *screen = NULL;
-FILE *log_file = NULL;
+struct fb_var_screeninfo vinfo;
+uint16_t *fbp = NULL;
 int cursor_x = 10, cursor_y = 10;
+FILE *log_file = NULL;
 
-void draw_char(int x, int y, char c, uint32_t color) {
+void draw_char(int x, int y, char c, uint16_t color) {
     if (c < 32 || c > 127) return;
-    const unsigned char *bitmap = font8x8[c - 32];
+    const uint8_t *bitmap = font8x8[c - 32];
     for (int i = 0; i < 8; i++) {
         for (int j = 0; j < 8; j++) {
             if (bitmap[i] & (1 << (7 - j))) {
-                uint32_t *pixels = (uint32_t *)screen->pixels;
-                pixels[(y + i) * screen->w + (x + j)] = color;
+                int px = x + j;
+                int py = y + i;
+                if (px < vinfo.xres && py < vinfo.yres) {
+                    fbp[py * vinfo.xres + px] = color;
+                }
             }
         }
     }
@@ -64,58 +72,53 @@ void screen_printf(const char *format, ...) {
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
 
-    // Print to log file
     if (log_file) fprintf(log_file, "%s", buffer);
     
-    // Draw to SDL Screen
     for (int i = 0; buffer[i] != '\0'; i++) {
         if (buffer[i] == '\n') {
             cursor_x = 10;
             cursor_y += 10;
         } else {
-            draw_char(cursor_x, cursor_y, buffer[i], 0xFFFFFF); // White text
+            draw_char(cursor_x, cursor_y, buffer[i], 0xFFFF); // White (RGB565)
             cursor_x += 8;
         }
     }
-    SDL_Flip(screen);
-}
-
-void print_system_file(const char* path, const char* title) {
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    screen_printf("\n> %s\n", title);
-    char buffer[256];
-    int lines = 0;
-    while (fgets(buffer, sizeof(buffer), f) && lines < 8) { // Keep it short for screen
-        screen_printf("%s", buffer);
-        lines++;
-    }
-    fclose(f);
 }
 
 int main() {
     log_file = fopen("/mnt/info.txt", "w");
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) return 1;
+    int fbfd = open("/dev/fb0", O_RDWR);
+    if (fbfd == -1) return 1;
+
+    ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo);
+    long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
+    fbp = (uint16_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+
+    // Clear screen (Black)
+    for (int i = 0; i < vinfo.xres * vinfo.yres; i++) fbp[i] = 0x0000;
+
+    screen_printf("MIPS DIRECT FRAMEBUFFER DIAGNOSTIC\n");
+    screen_printf("==================================\n");
+
+    // Print Diags
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    if (f) {
+        char buf[256];
+        int count = 0;
+        while (fgets(buf, 256, f) && count < 10) {
+            screen_printf("%s", buf);
+            count++;
+        }
+        fclose(f);
+    }
+
+    screen_printf("\nDone. Saved to /mnt/info.txt\nExiting in 10s...");
     
-    // Set resolution (Adjust 640x480 if your screen is smaller, e.g., 320x240)
-    screen = SDL_SetVideoMode(640, 480, 32, SDL_SWSURFACE);
-    if (!screen) return 1;
+    sync();
+    sleep(10);
 
-    SDL_FillRect(screen, NULL, 0x000000); // Black background
-
-    screen_printf("GAMESTICK DIAGNOSTIC TOOL\n");
-    screen_printf("========================\n");
-
-    print_system_file("/proc/cpuinfo", "CPU INFO");
-    print_system_file("/proc/version", "KERNEL");
-    print_system_file("/proc/device-tree/model", "MODEL");
-    
-    screen_printf("\nDone. Check /mnt/info.txt\nExiting in 10s...");
-    
-    sync(); // Flush writes to SD card
-    SDL_Delay(10000);
-
+    munmap(fbp, screensize);
+    close(fbfd);
     if (log_file) fclose(log_file);
-    SDL_Quit();
     return 0;
 }
