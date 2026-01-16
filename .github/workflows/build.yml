@@ -8,15 +8,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MIPS Toolchain & SDL
+      - name: Install MIPS Toolchain & MIPS SDL
         run: |
+          sudo dpkg --add-architecture mipsel
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu libsdl1.2-dev
+          sudo apt-get install -y gcc-mipsel-linux-gnu 
+          # Download the library specifically for the MIPS architecture
+          sudo apt-get install -y libsdl1.2-dev:mipsel
 
       - name: Compile
         run: |
-          # We link SDL statically to avoid missing .so files on the device
-          mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips -lSDL -lpthread -lm -ldl
+          # We use -L to point to the specific MIPS library path
+          # and -I to find the MIPS SDL headers
+          mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips \
+            -I/usr/include/SDL \
+            -L/usr/lib/mipsel-linux-gnu \
+            -lSDL -lpthread -lm -ldl
 
       - name: Upload
         uses: actions/upload-artifact@v4
