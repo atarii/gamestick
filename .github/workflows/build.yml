@@ -1,26 +1,25 @@
-name: Build MIPS Diagnostic
+name: Build MIPS SDL Diagnostic
 on: [push]
 
 jobs:
-  build_mipsel:
+  build_mips:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MIPS Toolchain
+      - name: Install MIPS Toolchain & SDL
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu
+          sudo apt-get install -y gcc-mipsel-linux-gnu libsdl1.2-dev
 
-      - name: Compile Static MIPS Binary
+      - name: Compile
         run: |
-          # mipsel-linux-gnu-gcc targets 32-bit Little Endian MIPS
-          # -static is essential for portable embedded binaries
-          mipsel-linux-gnu-gcc -static -march=mips32 sysinfo.c -o sysinfo_mips
+          # We link SDL statically to avoid missing .so files on the device
+          mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips -lSDL -lpthread -lm -ldl
 
-      - name: Upload MIPS Diagnostic
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: diagnostic-mips
+          name: mips-sdl-tool
           path: sysinfo_mips
