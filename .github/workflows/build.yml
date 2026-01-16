@@ -1,25 +1,26 @@
-name: Build Embedded Diagnostic
+name: Build MIPS Diagnostic
 on: [push]
 
 jobs:
-  build_armv7:
+  build_mipsel:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install ARM Toolchain
+      - name: Install MIPS Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabihf
+          sudo apt-get install -y gcc-mipsel-linux-gnu
 
-      - name: Compile Static Binary
+      - name: Compile Static MIPS Binary
         run: |
-          # Use 'hard' float but specify a standard FPU to satisfy the compiler
-          arm-linux-gnueabihf-gcc -static -march=armv7-a -mfloat-abi=hard -mfpu=vfpv3-d16 sysinfo.c -o sysinfo_arm
+          # mipsel-linux-gnu-gcc targets 32-bit Little Endian MIPS
+          # -static is essential for portable embedded binaries
+          mipsel-linux-gnu-gcc -static -march=mips32 sysinfo.c -o sysinfo_mips
 
-      - name: Upload Diagnostic Tool
+      - name: Upload MIPS Diagnostic
         uses: actions/upload-artifact@v4
         with:
-          name: diagnostic-tool
-          path: sysinfo_arm
+          name: diagnostic-mips
+          path: sysinfo_mips
