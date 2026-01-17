@@ -1,12 +1,31 @@
-name: Build MIPS FB Diagnostic
+name: Build MIPS brdoom
 on: [push]
 
 jobs:
-  build_mips:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Install MIPS Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mipsel-linux-gnu
+
+      - name: Clone brdoom Source
+        run: |
+          git clone https://github.com/re-retro/brdoom.git
+          
+      - name: Compile for MIPS
+        run: |
+          cd brdoom
+          # We manually invoke the compiler to ensure a static build
+          # -DCC_MIPSEL helps with byte-ordering if the source supports it
+          mipsel-linux-gnu-gcc -static -O2 -I. *.c -o brdoom_mips -lm -lpthread
+          
+      - name: Upload Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: brdoom-mips-binary
+          path: brdoom/brdoom_mips
 
       - name: Install MIPS Toolchain
         run: |
