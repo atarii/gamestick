@@ -1,4 +1,4 @@
-name: Build MIPS brdoom
+name: Build MIPS fbDOOM
 on: [push]
 
 jobs:
@@ -8,37 +8,21 @@ jobs:
       - name: Install MIPS Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu
+          sudo apt-get install -y gcc-mipsel-linux-gnu make
 
-      - name: Clone brdoom Source
+      - name: Clone fbDOOM Source
         run: |
-          git clone https://github.com/re-retro/brdoom.git
+          git clone https://github.com/maximevince/fbDOOM.git
           
       - name: Compile for MIPS
         run: |
-          cd brdoom
-          # We manually invoke the compiler to ensure a static build
-          # -DCC_MIPSEL helps with byte-ordering if the source supports it
-          mipsel-linux-gnu-gcc -static -O2 -I. *.c -o brdoom_mips -lm -lpthread
+          cd fbDOOM
+          # We pass CC and LDFLAGS to force a static MIPS build
+          # -static ensures it doesn't need external .so files
+          make CC=mipsel-linux-gnu-gcc LDFLAGS="-static"
           
       - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: brdoom-mips-binary
-          path: brdoom/brdoom_mips
-
-      - name: Install MIPS Toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu
-
-      - name: Compile
-        run: |
-          # Pure static build, no external libraries needed
-          mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: mips-fb-tool
-          path: sysinfo_mips
+          name: fbdoom-mips
+          path: fbDOOM/fbdoom
