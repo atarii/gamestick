@@ -85,40 +85,87 @@ void screen_printf(const char *format, ...) {
     }
 }
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// ... (keep your existing font8x8, vinfo, draw_char, etc.)
+
+// Helper to dump a file both to screen and log_file
+void dump_file(const char *label, const char *path, int max_lines) {
+    screen_printf("--- %s (%s) ---\n", label, path);
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        screen_printf("  Could not open %s\n", path);
+        return;
+    }
+    char buf[256];
+    int count = 0;
+    while (fgets(buf, sizeof(buf), f) && count < max_lines) {
+        screen_printf(" %s", buf);
+        count++;
+    }
+    fclose(f);
+}
+
 int main() {
     log_file = fopen("/mnt/info.txt", "w");
-    int fbfd = open("/dev/fb0", O_RDWR);
-    if (fbfd == -1) return 1;
-
-    ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo);
-    long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
-    fbp = (uint16_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
-
-    // Clear screen (Black)
-    for (int i = 0; i < vinfo.xres * vinfo.yres; i++) fbp[i] = 0x0000;
-
-    screen_printf("MIPS DIRECT FRAMEBUFFER DIAGNOSTIC\n");
-    screen_printf("==================================\n");
-
-    // Print Diags
-    FILE *f = fopen("/proc/cpuinfo", "r");
-    if (f) {
-        char buf[256];
-        int count = 0;
-        while (fgets(buf, 256, f) && count < 10) {
-            screen_printf("%s", buf);
-            count++;
-        }
-        fclose(f);
+    if (!log_file) {
+        // Fallback to /tmp if /mnt isn't writable
+        log_file = fopen("/tmp/info.txt", "w");
     }
 
-    screen_printf("\nDone. Saved to /mnt/info.txt\nExiting in 10s...");
+    int fbfd = open("/dev/fb0", O_RDWR);
+    if (fbfd != -1) {
+        ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo);
+        long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
+        fbp = (uint16_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+        // Clear screen (Black)
+        for (int i = 0; i < vinfo.xres * vinfo.yres; i++) fbp[i] = 0x0000;
+    }
+
+    screen_printf("MIPS BLACKBOX DIAGNOSTIC\n");
+    screen_printf("========================\n");
+
+    // 1. Kernel Version & Boot Command Line
+    dump_file("KERNEL", "/proc/version", 1);
+    dump_file("CMDLINE", "/proc/cmdline", 2);
+
+    // 2. CPU & Memory
+    dump_file("CPU", "/proc/cpuinfo", 5);
+    dump_file("MEM", "/proc/meminfo", 5);
+
+    // 3. Storage & Partitions
+    dump_file("PARTITIONS", "/proc/partitions", 10);
+    dump_file("MOUNTS", "/proc/mounts", 10);
+
+    // 4. File System Exploration
+    char cwd[256];
+    if (getcwd(cwd, sizeof(cwd))) screen_printf("PWD: %s\n", cwd);
+
+    screen_printf("--- ROOT CONTENTS ---\n");
+    FILE *fls = popen("ls -F /", "r");
+    if (fls) {
+        char buf[256];
+        while (fgets(buf, sizeof(buf), fls)) screen_printf(" %s", buf);
+        pclose(fls);
+    }
+
+    // 5. Network Interfaces
+    dump_file("NET", "/proc/net/dev", 5);
+
+    screen_printf("\nDiagnostic Complete.\nExiting in 10s...");
+    
+    if (log_file) {
+        fflush(log_file);
+        fsync(fileno(log_file)); // Force write to disk
+    }
     
     sync();
     sleep(10);
 
-    munmap(fbp, screensize);
-    close(fbfd);
+    if (fbp) munmap(fbp, vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8);
+    if (fbfd != -1) close(fbfd);
     if (log_file) fclose(log_file);
     return 0;
 }
