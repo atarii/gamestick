@@ -1,28 +1,31 @@
-name: Build MIPS fbDOOM
-on: [push]
+name: Build MIPS Diag
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Install MIPS Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu make
+          sudo apt-get install -y gcc-mips-linux-gnu
 
-      - name: Clone fbDOOM Source
+      - name: Compile Diagnostic Tool
         run: |
-          git clone https://github.com/maximevince/fbDOOM.git
-          
-      - name: Compile for MIPS
-        run: |
-          cd fbDOOM
-          # We pass CC and LDFLAGS to force a static MIPS build
-          # -static ensures it doesn't need external .so files
-          make CC=mipsel-linux-gnu-gcc LDFLAGS="-static"
-          
-      - name: Upload Binary
-        uses: actions/upload-artifact@v4
+          mips-linux-gnu-gcc diag.c -o diag -static
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: fbdoom-mips
-          path: fbDOOM/fbdoom
+          name: mips-diag-binary
+          path: diag
