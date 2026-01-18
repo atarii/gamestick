@@ -22,10 +22,10 @@ jobs:
 
       - name: Compile Diagnostic Tool
         run: |
-          mips-linux-gnu-gcc diag.c -o diag -static
+          mips-linux-gnu-gcc sysinfo.c -o sysinfo -static
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: mips-diag-binary
-          path: diag
+          path: sysinfo
