@@ -7,6 +7,7 @@
 #include <sys/ioctl.h>
 #include <linux/fb.h>
 #include <stdarg.h>
+#include <string.h>
 
 // 8x8 font bitmap (ASCII 32-127)
 static const uint8_t font8x8[96][8] = {
@@ -49,6 +50,7 @@ uint16_t *fbp = NULL;
 int cursor_x = 10, cursor_y = 10;
 FILE *log_file = NULL;
 
+// Draw a single 8x8 character to the framebuffer
 void draw_char(int x, int y, char c, uint16_t color) {
     if (c < 32 || c > 127) return;
     const uint8_t *bitmap = font8x8[c - 32];
@@ -57,7 +59,7 @@ void draw_char(int x, int y, char c, uint16_t color) {
             if (bitmap[i] & (1 << (7 - j))) {
                 int px = x + j;
                 int py = y + i;
-                if (px < vinfo.xres && py < vinfo.yres) {
+                if (px >= 0 && px < vinfo.xres && py >= 0 && py < vinfo.yres) {
                     fbp[py * vinfo.xres + px] = color;
                 }
             }
@@ -65,6 +67,7 @@ void draw_char(int x, int y, char c, uint16_t color) {
     }
 }
 
+// Custom printf that outputs to BOTH the screen and the /mnt/info.txt file
 void screen_printf(const char *format, ...) {
     char buffer[1024];
     va_list args;
@@ -72,100 +75,122 @@ void screen_printf(const char *format, ...) {
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
 
-    if (log_file) fprintf(log_file, "%s", buffer);
+    // Save to file
+    if (log_file) {
+        fprintf(log_file, "%s", buffer);
+        fflush(log_file);
+    }
     
+    // Output to framebuffer with basic wrapping
     for (int i = 0; buffer[i] != '\0'; i++) {
         if (buffer[i] == '\n') {
             cursor_x = 10;
             cursor_y += 10;
         } else {
-            draw_char(cursor_x, cursor_y, buffer[i], 0xFFFF); // White (RGB565)
+            draw_char(cursor_x, cursor_y, buffer[i], 0xFFFF); // White
             cursor_x += 8;
+            // Screen wrap logic
+            if (cursor_x > (int)vinfo.xres - 10) {
+                cursor_x = 10;
+                cursor_y += 10;
+            }
+        }
+        // Basic screen scroll reset (if we hit the bottom, restart at top)
+        if (cursor_y > (int)vinfo.yres - 10) {
+            cursor_y = 10;
         }
     }
 }
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-// ... (keep your existing font8x8, vinfo, draw_char, etc.)
-
-// Helper to dump a file both to screen and log_file
-void dump_file(const char *label, const char *path, int max_lines) {
-    screen_printf("--- %s (%s) ---\n", label, path);
+// Helper to dump file contents to screen and log
+void dump_sys_file(const char *title, const char *path, int max_lines) {
+    screen_printf(">> %s [%s]\n", title, path);
     FILE *f = fopen(path, "r");
     if (!f) {
-        screen_printf("  Could not open %s\n", path);
+        screen_printf("   Error: File not found.\n");
         return;
     }
-    char buf[256];
+    char line[256];
     int count = 0;
-    while (fgets(buf, sizeof(buf), f) && count < max_lines) {
-        screen_printf(" %s", buf);
+    while (fgets(line, sizeof(line), f) && count < max_lines) {
+        screen_printf(" %s", line);
         count++;
     }
     fclose(f);
+    screen_printf("\n");
 }
 
 int main() {
+    // 1. Setup Log File
     log_file = fopen("/mnt/info.txt", "w");
-    if (!log_file) {
-        // Fallback to /tmp if /mnt isn't writable
-        log_file = fopen("/tmp/info.txt", "w");
-    }
-
-    int fbfd = open("/dev/fb0", O_RDWR);
-    if (fbfd != -1) {
-        ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo);
-        long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
-        fbp = (uint16_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
-        // Clear screen (Black)
-        for (int i = 0; i < vinfo.xres * vinfo.yres; i++) fbp[i] = 0x0000;
-    }
-
-    screen_printf("MIPS BLACKBOX DIAGNOSTIC\n");
-    screen_printf("========================\n");
-
-    // 1. Kernel Version & Boot Command Line
-    dump_file("KERNEL", "/proc/version", 1);
-    dump_file("CMDLINE", "/proc/cmdline", 2);
-
-    // 2. CPU & Memory
-    dump_file("CPU", "/proc/cpuinfo", 5);
-    dump_file("MEM", "/proc/meminfo", 5);
-
-    // 3. Storage & Partitions
-    dump_file("PARTITIONS", "/proc/partitions", 10);
-    dump_file("MOUNTS", "/proc/mounts", 10);
-
-    // 4. File System Exploration
-    char cwd[256];
-    if (getcwd(cwd, sizeof(cwd))) screen_printf("PWD: %s\n", cwd);
-
-    screen_printf("--- ROOT CONTENTS ---\n");
-    FILE *fls = popen("ls -F /", "r");
-    if (fls) {
-        char buf[256];
-        while (fgets(buf, sizeof(buf), fls)) screen_printf(" %s", buf);
-        pclose(fls);
-    }
-
-    // 5. Network Interfaces
-    dump_file("NET", "/proc/net/dev", 5);
-
-    screen_printf("\nDiagnostic Complete.\nExiting in 10s...");
     
+    // 2. Setup Framebuffer
+    int fbfd = open("/dev/fb0", O_RDWR);
+    if (fbfd == -1) {
+        printf("Error: Cannot open /dev/fb0\n");
+        if (log_file) fclose(log_file);
+        return 1;
+    }
+
+    if (ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo)) {
+        printf("Error reading screen info\n");
+        close(fbfd);
+        return 1;
+    }
+
+    long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
+    fbp = (uint16_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+    if (fbp == MAP_FAILED) {
+        printf("Error: failed to mmap framebuffer\n");
+        close(fbfd);
+        return 1;
+    }
+
+    // Clear Screen
+    for (int i = 0; i < vinfo.xres * vinfo.yres; i++) fbp[i] = 0x0000;
+
+    screen_printf("MIPS BLACKBOX SYSTEM PROBE\n");
+    screen_printf("==========================\n");
+
+    // --- SYSTEM INFO PROBES ---
+    dump_sys_file("KERNEL", "/proc/version", 1);
+    dump_sys_file("BOOT ARGS", "/proc/cmdline", 2);
+    dump_sys_file("CPU INFO", "/proc/cpuinfo", 6);
+    dump_sys_file("MEMORY", "/proc/meminfo", 4);
+    dump_sys_file("PARTITIONS", "/proc/partitions", 8);
+    dump_sys_file("MOUNTS", "/proc/mounts", 10);
+
+    // Current Working Directory
+    char cwd[256];
+    if (getcwd(cwd, sizeof(cwd))) {
+        screen_printf(">> PWD: %s\n\n", cwd);
+    }
+
+    // List Root Directory using popen
+    screen_printf(">> ROOT CONTENTS (/)\n");
+    FILE *ls_fp = popen("ls -F /", "r");
+    if (ls_fp) {
+        char buf[256];
+        while (fgets(buf, sizeof(buf), ls_fp)) {
+            screen_printf(" %s", buf);
+        }
+        pclose(ls_fp);
+    }
+
+    screen_printf("\nDiagnostic Complete.\nSaved to /mnt/info.txt\nExiting in 10s...");
+
+    // Final Sync to ensure data is physically written to flash/SD
     if (log_file) {
         fflush(log_file);
-        fsync(fileno(log_file)); // Force write to disk
+        fsync(fileno(log_file));
     }
-    
     sync();
     sleep(10);
 
-    if (fbp) munmap(fbp, vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8);
-    if (fbfd != -1) close(fbfd);
+    // Cleanup
+    munmap(fbp, screensize);
+    close(fbfd);
     if (log_file) fclose(log_file);
+
     return 0;
 }
