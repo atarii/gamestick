@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <linux/fb.h>
 #include <stdarg.h>
@@ -51,6 +52,51 @@ struct fb_var_screeninfo vinfo;
 uint32_t *fbp32 = NULL;
 int cursor_x = MARGIN, cursor_y = MARGIN;
 FILE *log_file = NULL;
+
+// Helper to create directories recursively
+void mkdir_p(const char *path) {
+    char tmp[1024];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            mkdir(tmp, S_IRWXU);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, S_IRWXU);
+}
+
+// Copy file for virtual and physical files
+void copy_file(const char *src, const char *dst) {
+    FILE *fsrc = fopen(src, "rb");
+    if (!fsrc) return;
+    FILE *fdst = fopen(dst, "wb");
+    if (!fdst) { fclose(fsrc); return; }
+    char buffer[4096];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), fsrc)) > 0) fwrite(buffer, 1, n, fdst);
+    fclose(fsrc);
+    fclose(fdst);
+}
+
+// Recursive directory copy
+void copy_dir(const char *src_dir, const char *dst_dir) {
+    DIR *dir = opendir(src_dir);
+    if (!dir) return;
+    mkdir_p(dst_dir);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry.d_name, ".") == 0 || strcmp(entry.d_name, "..") == 0) continue;
+        char s_path[1024], d_path[1024];
+        snprintf(s_path, sizeof(s_path), "%s/%s", src_dir, entry.d_name);
+        snprintf(d_path, sizeof(d_path), "%s/%s", dst_dir, entry.d_name);
+        struct stat st;
+        if (lstat(s_path, &st) == 0 && S_ISDIR(st.st_mode)) copy_dir(s_path, d_path);
+        else copy_file(s_path, d_path);
+    }
+    closedir(dir);
+}
 
 void draw_char_large(int x, int y, char c, uint32_t color) {
     if (c < 32 || c > 127) return;
@@ -143,31 +189,34 @@ int main() {
 
     screen_printf("RK-GAME MIPS DIAGNOSTIC REPORT\n");
 
-    run_cmd("whoami");
-    run_cmd("uname -a");
-    run_cmd("pwd");
-    run_cmd("df -h");
-    run_cmd("mount");
-    run_cmd("ls -l /");
-    run_cmd("ls -l /bin");
-    run_cmd("ls -l /tmp");
-    run_cmd("cat /etc/init.d/*");    
+    // 1. Live Info
+    run_cmd("uname -a; df -h; mount; ls -l /");
     run_cmd("ps w");
-    run_cmd("ps -T");
+    run_cmd("ls /etc/");
+    
+    // 2. Snapshot Folders
+    screen_printf("\nBacking up /etc/init.d/ ...\n");
+    copy_dir("/etc/init.d", "/mnt/sdcard/diag_dump/init.d");
+    
+    screen_printf("Backing up /proc/device-tree/ ...\n");
+    copy_dir("/proc/device-tree", "/mnt/sdcard/diag_dump/device-tree");
 
-    dump_sys_file("/proc/version");
+    screen_printf("Backing up /proc/1/ metadata ...\n");
+    mkdir_p("/mnt/sdcard/diag_dump/pid1");
+    copy_file("/proc/1/cmdline", "/mnt/sdcard/diag_dump/pid1/cmdline");
+    copy_file("/proc/1/environ", "/mnt/sdcard/diag_dump/pid1/environ");
+    copy_file("/proc/1/status", "/mnt/sdcard/diag_dump/pid1/status");
+
+    // 3. Proc Dumps
     dump_sys_file("/proc/cmdline");
-    dump_sys_file("/proc/cpuinfo");
-    dump_sys_file("/proc/meminfo");
     dump_sys_file("/proc/partitions");
+    dump_sys_file("/proc/version");
+    dump_sys_file("/proc/cpuinfo");
     dump_sys_file("/proc/mounts");
+    run_cmd("dmesg > /mnt/sdcard/dmesg.txt");
 
-    run_cmd("ls -l /dev/fb*");
+    // 4. Framebuffer info
     dump_sys_file("/sys/class/graphics/fb0/modes");
-    run_cmd("fbset -i");
-
-    run_cmd("dmesg");
-    run_cmd("ls -l /proc/1");
 
     screen_printf("\nDIAGNOSTICS COMPLETE. FILE SAVED TO SD CARD.\n");
     
