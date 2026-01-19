@@ -46,19 +46,25 @@ static const uint8_t font8x8[96][8] = {
 };
 
 struct fb_var_screeninfo vinfo;
-uint16_t *fbp = NULL;
-int cursor_x = 20, cursor_y = 20;
+uint32_t *fbp32 = NULL;
+int cursor_x = 40, cursor_y = 40;
 FILE *log_file = NULL;
 
-void draw_char(int x, int y, char c, uint16_t color) {
+// 16x16 Scaled Font Drawing
+void draw_char_large(int x, int y, char c, uint32_t color) {
     if (c < 32 || c > 127) return;
     const uint8_t *bitmap = font8x8[c - 32];
     for (int i = 0; i < 8; i++) {
         for (int j = 0; j < 8; j++) {
             if (bitmap[i] & (1 << (7 - j))) {
-                int px = x + j, py = y + i;
-                if (px >= 0 && px < (int)vinfo.xres && py >= 0 && py < (int)vinfo.yres) {
-                    fbp[py * vinfo.xres + px] = color;
+                for(int dy=0; dy<2; dy++) {
+                    for(int dx=0; dx<2; dx++) {
+                        int px = x + (j * 2) + dx;
+                        int py = y + (i * 2) + dy;
+                        if (px >= 0 && px < (int)vinfo.xres && py >= 0 && py < (int)vinfo.yres) {
+                            fbp32[py * vinfo.xres + px] = color;
+                        }
+                    }
                 }
             }
         }
@@ -76,13 +82,17 @@ void screen_printf(const char *format, ...) {
     
     for (int i = 0; buffer[i] != '\0'; i++) {
         if (buffer[i] == '\n') {
-            cursor_x = 20; cursor_y += 10;
+            cursor_x = 40; cursor_y += 20;
         } else {
-            draw_char(cursor_x, cursor_y, buffer[i], 0xFFFF);
-            cursor_x += 8;
-            if (cursor_x > (int)vinfo.xres - 20) { cursor_x = 20; cursor_y += 10; }
+            draw_char_large(cursor_x, cursor_y, buffer[i], 0xFFFFFFFF);
+            cursor_x += 16;
+            if (cursor_x > (int)vinfo.xres - 40) { cursor_x = 40; cursor_y += 20; }
         }
-        if (cursor_y > (int)vinfo.yres - 20) cursor_y = 20; 
+        if (cursor_y > (int)vinfo.yres - 40) {
+            // Simple auto-scroll: Clear and return to top
+            for (int p = 0; p < (int)(vinfo.xres * vinfo.yres); p++) fbp32[p] = 0;
+            cursor_y = 40;
+        }
     }
 }
 
@@ -106,21 +116,25 @@ void dump_sys_file(const char* path) {
 }
 
 int main() {
-    // Open log on SD card mount discovered in your previous run
-    log_file = fopen("/mnt/sdcard/diag_full.txt", "w");
+    // Open log to SD card (confirmed from your previous run)
+    log_file = fopen("/mnt/sdcard/RK_GAME_DIAG.txt", "w");
     if (!log_file) log_file = fopen("/mnt/info.txt", "w");
 
     int fbfd = open("/dev/fb0", O_RDWR);
     if (fbfd == -1) return 1;
 
-    ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo);
-    if (vinfo.xres == 0) { vinfo.xres = 1280; vinfo.yres = 720; vinfo.bits_per_pixel = 16; }
+    if (ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo)) {
+        vinfo.xres = 1280; vinfo.yres = 720; vinfo.bits_per_pixel = 32;
+    }
+    
+    // Explicitly force 32-bit for 1280x720 Hichip standard to prevent duplication
+    vinfo.bits_per_pixel = 32;
 
     long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
-    fbp = (uint16_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+    fbp32 = (uint32_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
 
-    // Initial Clear
-    for (int i = 0; i < vinfo.xres * vinfo.yres; i++) fbp[i] = 0x0000;
+    // Initial Screen Clear (Black)
+    for (int i = 0; i < (int)(vinfo.xres * vinfo.yres); i++) fbp32[i] = 0x00000000;
 
     screen_printf("RK-GAME MIPS DIAGNOSTIC REPORT\n");
 
@@ -133,8 +147,8 @@ int main() {
     run_cmd("ls -l /");
     run_cmd("ls -l /bin");
     run_cmd("ls -l /tmp");
-    run_cmd("ls -l /etc");
-    run_cmd("ls -l /etc/init.d/");
+    run_cmd("cat /etc/init.d/*");    
+    run_cmd("ps w");
 
     // --- System/Kernel Info ---
     dump_sys_file("/proc/version");
@@ -152,13 +166,13 @@ int main() {
     // --- Boot Logs ---
     run_cmd("dmesg");
 
-    screen_printf("\nALL DIAGNOSTICS COMPLETE. CHECK /mnt/sdcard/diag_full.txt\n");
+    screen_printf("\nDIAGNOSTICS COMPLETE. FILE SAVED TO SD CARD.\n");
     
     if (log_file) { fsync(fileno(log_file)); fclose(log_file); }
     sync();
-    sleep(10);
+    sleep(15);
 
-    munmap(fbp, screensize);
+    munmap(fbp32, screensize);
     close(fbfd);
     return 0;
 }
