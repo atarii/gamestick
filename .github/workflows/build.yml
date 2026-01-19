@@ -10,29 +10,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Toolchain and Headers
+      - name: Install Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu make git libsdl1.2-dev
+          sudo apt-get install -y gcc-mipsel-linux-gnu make git
 
       - name: Build Diagnostics and Wrapper
         run: |
           mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
           mipsel-linux-gnu-gcc -static wrapper.c -o rkgame
 
-      - name: Build fbDOOM (No-SDL Patch)
+      - name: Build fbDOOM (Direct Framebuffer)
         run: |
           git clone https://github.com/maximevince/fbDOOM.git
           cd fbDOOM/fbdoom
           
-          # Remove -lSDL from the Makefile since we want raw framebuffer only
-          sed -i 's/-lSDL//g' Makefile
+          # 1. Modify Makefile: Remove SDL linking and add static flags
+          sed -i 's/LIBS=-lSDL//g' Makefile
+          sed -i 's/CFLAGS=-O2/CFLAGS=-O2 -static -DNONET/g' Makefile
           
-          # Force the build using the MIPS compiler
-          # We define NONET to reduce dependencies further
-          make CC=mipsel-linux-gnu-gcc \
-               CFLAGS="-O2 -static -DNONET" \
-               LDFLAGS="-static"
+          # 2. Build using the MIPS cross-compiler
+          # We pass the CC override directly to make
+          make CC=mipsel-linux-gnu-gcc LDFLAGS="-static"
           
           mv fbdoom ../../fbdoom_mips
 
