@@ -67,7 +67,7 @@ void draw_char(int x, int y, char c, uint16_t color) {
     }
 }
 
-// Custom printf that outputs to BOTH the screen and the /mnt/info.txt file
+// Custom printf that outputs to BOTH the screen and the /mnt/sdcard/info.txt file
 void screen_printf(const char *format, ...) {
     char buffer[1024];
     va_list args;
@@ -122,7 +122,7 @@ void dump_sys_file(const char *title, const char *path, int max_lines) {
 
 int main() {
     // 1. Setup Log File
-    log_file = fopen("/mnt/info.txt", "w");
+    log_file = fopen("/mnt/sdcard/info.txt", "w");
     
     // 2. Setup Framebuffer
     int fbfd = open("/dev/fb0", O_RDWR);
@@ -177,7 +177,17 @@ int main() {
         pclose(ls_fp);
     }
 
-    screen_printf("\nDiagnostic Complete.\nSaved to /mnt/info.txt\nExiting in 10s...");
+    // framebuffer debug commands
+    system("ls -l /dev/fb* > /mnt/sdcard/fb_list.txt");
+    system("cat /sys/class/graphics/fb0/modes >> /mnt/sdcard/fb_list.txt");
+    system("fbset -i >> /mnt/sdcard/fb_list.txt");
+    system("dmesg > /mnt/sdcard/dmesg.txt");
+    system("whoami > /mnt/sdcard/extra.txt");
+    system("uname -a >> /mnt/sdcard/extra.txt");
+    system("df -h >> /mnt/sdcard/extra.txt");
+    system("ls -l / >> /mnt/sdcard/extra.txt");
+
+    screen_printf("\nDiagnostic Complete.\nSaved to /mnt/sdcard/info.txt\nExiting in 10s...");
 
     // Final Sync to ensure data is physically written to flash/SD
     if (log_file) {
