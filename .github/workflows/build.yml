@@ -10,23 +10,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Toolchain
+      - name: Install Toolchain and Headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu make git
+          sudo apt-get install -y gcc-mipsel-linux-gnu make git libsdl1.2-dev
 
       - name: Build Diagnostics and Wrapper
         run: |
-          # Compile our custom C tools
           mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
           mipsel-linux-gnu-gcc -static wrapper.c -o rkgame
 
-      - name: Build fbDOOM
+      - name: Build fbDOOM (No-SDL Patch)
         run: |
           git clone https://github.com/maximevince/fbDOOM.git
           cd fbDOOM/fbdoom
-          # fbDOOM uses a subdirectory for the source and Makefile
-          make CC=mipsel-linux-gnu-gcc CFLAGS="-O2 -static" LDFLAGS="-static"
+          
+          # Remove -lSDL from the Makefile since we want raw framebuffer only
+          sed -i 's/-lSDL//g' Makefile
+          
+          # Force the build using the MIPS compiler
+          # We define NONET to reduce dependencies further
+          make CC=mipsel-linux-gnu-gcc \
+               CFLAGS="-O2 -static -DNONET" \
+               LDFLAGS="-static"
+          
           mv fbdoom ../../fbdoom_mips
 
       - name: Upload Binaries
