@@ -188,13 +188,16 @@ int main() {
     screen_printf("RK-GAME MIPS DIAGNOSTIC REPORT\n");
 
     // 1. Live Info
-    run_cmd("uname -a; df -h; mount; ls -l /");
+    run_cmd("uname -a");
+    run_cmd("df -h");
+    run_cmd("mount");
+    run_cmd("ls -l /");
     run_cmd("ps w");
     run_cmd("ls /etc/");
     
     // 2. Snapshot Folders
-    screen_printf("\nBacking up /etc/init.d/ ...\n");
-    copy_dir("/etc/init.d", "/mnt/sdcard/diag_dump/init.d");
+    screen_printf("\nBacking up /etc/ ...\n");
+    copy_dir("/etc/", "/mnt/sdcard/diag_dump/etc");
     
     screen_printf("Backing up /proc/device-tree/ ...\n");
     copy_dir("/proc/device-tree", "/mnt/sdcard/diag_dump/device-tree");
