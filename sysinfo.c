@@ -9,6 +9,7 @@
 #include <linux/fb.h>
 #include <stdarg.h>
 #include <string.h>
+#include <dirent.h>
 
 #define MARGIN 60  // Safe area to prevent text cutoff on TVs
 
