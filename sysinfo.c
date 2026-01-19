@@ -9,6 +9,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+#define MARGIN 60  // Safe area to prevent text cutoff on TVs
+
 // 8x8 font bitmap (ASCII 32-127)
 static const uint8_t font8x8[96][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, {0x18,0x3c,0x3c,0x18,0x18,0x00,0x18,0x00}, // space, !
@@ -47,10 +49,9 @@ static const uint8_t font8x8[96][8] = {
 
 struct fb_var_screeninfo vinfo;
 uint32_t *fbp32 = NULL;
-int cursor_x = 40, cursor_y = 40;
+int cursor_x = MARGIN, cursor_y = MARGIN;
 FILE *log_file = NULL;
 
-// 16x16 Scaled Font Drawing
 void draw_char_large(int x, int y, char c, uint32_t color) {
     if (c < 32 || c > 127) return;
     const uint8_t *bitmap = font8x8[c - 32];
@@ -82,16 +83,19 @@ void screen_printf(const char *format, ...) {
     
     for (int i = 0; buffer[i] != '\0'; i++) {
         if (buffer[i] == '\n') {
-            cursor_x = 40; cursor_y += 20;
+            cursor_x = MARGIN; cursor_y += 20;
         } else {
             draw_char_large(cursor_x, cursor_y, buffer[i], 0xFFFFFFFF);
             cursor_x += 16;
-            if (cursor_x > (int)vinfo.xres - 40) { cursor_x = 40; cursor_y += 20; }
+            if (cursor_x > (int)vinfo.xres - MARGIN) { cursor_x = MARGIN; cursor_y += 20; }
         }
-        if (cursor_y > (int)vinfo.yres - 40) {
-            // Simple auto-scroll: Clear and return to top
-            for (int p = 0; p < (int)(vinfo.xres * vinfo.yres); p++) fbp32[p] = 0;
-            cursor_y = 40;
+        if (cursor_y > (int)vinfo.yres - MARGIN) {
+            // Clear screen and reset within margins
+            for (int p = 0; p < (int)(vinfo.xres * vinfo.yres); p++) fbp32[p] = 0x00000000;
+            // Redraw border
+            for (int x=0; x<vinfo.xres; x++) { fbp32[x] = 0xFFFF0000; fbp32[(vinfo.yres-1)*vinfo.xres + x] = 0xFFFF0000; }
+            for (int y=0; y<vinfo.yres; y++) { fbp32[y*vinfo.xres] = 0xFFFF0000; fbp32[y*vinfo.xres + (vinfo.xres-1)] = 0xFFFF0000; }
+            cursor_y = MARGIN;
         }
     }
 }
@@ -116,7 +120,6 @@ void dump_sys_file(const char* path) {
 }
 
 int main() {
-    // Open log to SD card (confirmed from your previous run)
     log_file = fopen("/mnt/sdcard/RK_GAME_DIAG.txt", "w");
     if (!log_file) log_file = fopen("/mnt/info.txt", "w");
 
@@ -126,19 +129,20 @@ int main() {
     if (ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo)) {
         vinfo.xres = 1280; vinfo.yres = 720; vinfo.bits_per_pixel = 32;
     }
-    
-    // Explicitly force 32-bit for 1280x720 Hichip standard to prevent duplication
     vinfo.bits_per_pixel = 32;
 
     long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
     fbp32 = (uint32_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
 
-    // Initial Screen Clear (Black)
+    // Initial Screen Clear
     for (int i = 0; i < (int)(vinfo.xres * vinfo.yres); i++) fbp32[i] = 0x00000000;
+
+    // Draw visible Red Border (1px) to check for TV Overscan
+    for (int x=0; x<vinfo.xres; x++) { fbp32[x] = 0xFFFF0000; fbp32[(vinfo.yres-1)*vinfo.xres + x] = 0xFFFF0000; }
+    for (int y=0; y<vinfo.yres; y++) { fbp32[y*vinfo.xres] = 0xFFFF0000; fbp32[y*vinfo.xres + (vinfo.xres-1)] = 0xFFFF0000; }
 
     screen_printf("RK-GAME MIPS DIAGNOSTIC REPORT\n");
 
-    // --- Environment Info ---
     run_cmd("whoami");
     run_cmd("uname -a");
     run_cmd("pwd");
@@ -149,8 +153,8 @@ int main() {
     run_cmd("ls -l /tmp");
     run_cmd("cat /etc/init.d/*");    
     run_cmd("ps w");
+    run_cmd("ps -T");
 
-    // --- System/Kernel Info ---
     dump_sys_file("/proc/version");
     dump_sys_file("/proc/cmdline");
     dump_sys_file("/proc/cpuinfo");
@@ -158,13 +162,12 @@ int main() {
     dump_sys_file("/proc/partitions");
     dump_sys_file("/proc/mounts");
 
-    // --- Graphics/Framebuffer Info ---
     run_cmd("ls -l /dev/fb*");
     dump_sys_file("/sys/class/graphics/fb0/modes");
     run_cmd("fbset -i");
 
-    // --- Boot Logs ---
     run_cmd("dmesg");
+    run_cmd("ls -l /proc/1");
 
     screen_printf("\nDIAGNOSTICS COMPLETE. FILE SAVED TO SD CARD.\n");
     
