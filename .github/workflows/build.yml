@@ -15,10 +15,10 @@ jobs:
 
       - name: Compile
         run: |
-          mipsel-linux-gnu-gcc -static diag.c -o diag_mips
+          mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
 
       - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: diag-tool
-          path: diag_mips
+          name: sysinfo-tool
+          path: sysinfo_mips
