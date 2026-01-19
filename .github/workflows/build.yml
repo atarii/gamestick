@@ -1,5 +1,7 @@
-name: Build MIPS Diagnostic
-on: [push]
+name: Build MIPS Gaming Toolkit
+
+on:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -8,17 +10,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MIPS Toolchain
+      - name: Install Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu
+          sudo apt-get install -y gcc-mipsel-linux-gnu make git
 
-      - name: Compile
+      - name: Build Diagnostics and Wrapper
         run: |
+          # Compile the tools we wrote earlier
           mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
+          mipsel-linux-gnu-gcc -static wrapper.c -o rkgame
 
-      - name: Upload Binary
+      - name: Build fbDOOM
+        run: |
+          git clone https://github.com/maximevince/fbDOOM.git
+          cd fbDOOM
+          # Override the Makefile to use the cross-compiler
+          make CC=mipsel-linux-gnu-gcc CFLAGS="-O2 -static" LDFLAGS="-static"
+          mv fbdoom ../fbdoom_mips
+
+      - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: sysinfo-tool
-          path: sysinfo_mips
+          name: mips-gaming-pack
+          path: |
+            sysinfo_mips
+            rkgame
+            fbdoom_mips
