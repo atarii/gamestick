@@ -1,31 +1,24 @@
-name: Build MIPS Diag
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+name: Build MIPS Diagnostic
+on: [push]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install MIPS Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mips-linux-gnu
+          sudo apt-get install -y gcc-mipsel-linux-gnu
 
-      - name: Compile Diagnostic Tool
+      - name: Compile
         run: |
-          mips-linux-gnu-gcc sysinfo.c -o sysinfo -static
+          mipsel-linux-gnu-gcc -static diag.c -o diag_mips
 
-      - name: Upload Artifact
+      - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: mips-diag-binary
-          path: sysinfo
+          name: diag-tool
+          path: diag_mips
