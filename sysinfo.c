@@ -54,21 +54,19 @@ uint32_t *fbp32 = NULL;
 int cursor_x = MARGIN, cursor_y = MARGIN;
 FILE *log_file = NULL;
 
-// Helper to create directories recursively
 void mkdir_p(const char *path) {
     char tmp[1024];
     snprintf(tmp, sizeof(tmp), "%s", path);
     for (char *p = tmp + 1; *p; p++) {
         if (*p == '/') {
             *p = 0;
-            mkdir(tmp, S_IRWXU);
+            if (strlen(tmp) > 0) mkdir(tmp, S_IRWXU);
             *p = '/';
         }
     }
-    mkdir(tmp, S_IRWXU);
+    mkdir(path, S_IRWXU);
 }
 
-// Copy file for virtual and physical files
 void copy_file(const char *src, const char *dst) {
     FILE *fsrc = fopen(src, "rb");
     if (!fsrc) return;
@@ -81,17 +79,16 @@ void copy_file(const char *src, const char *dst) {
     fclose(fdst);
 }
 
-// Recursive directory copy
 void copy_dir(const char *src_dir, const char *dst_dir) {
     DIR *dir = opendir(src_dir);
     if (!dir) return;
     mkdir_p(dst_dir);
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry.d_name, ".") == 0 || strcmp(entry.d_name, "..") == 0) continue;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
         char s_path[1024], d_path[1024];
-        snprintf(s_path, sizeof(s_path), "%s/%s", src_dir, entry.d_name);
-        snprintf(d_path, sizeof(d_path), "%s/%s", dst_dir, entry.d_name);
+        snprintf(s_path, sizeof(s_path), "%s/%s", src_dir, entry->d_name);
+        snprintf(d_path, sizeof(d_path), "%s/%s", dst_dir, entry->d_name);
         struct stat st;
         if (lstat(s_path, &st) == 0 && S_ISDIR(st.st_mode)) copy_dir(s_path, d_path);
         else copy_file(s_path, d_path);
