@@ -48,7 +48,10 @@ int main() {
     log_command(out, "uname -a");
     log_command(out, "pwd");
     log_command(out, "df -h");
+    log_command(out, "mount");
     log_command(out, "ls -l /");
+    log_command(out, "ls -l /bin");
+    log_command(out, "ls -l /tm");
 
     // --- System/Kernel Info ---
     log_file(out, "/proc/version");
@@ -68,5 +71,21 @@ int main() {
 
     fclose(out);
     sync(); // Force write to physical media
+
+    int fbfd = open("/dev/fb0", O_RDWR);
+    ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo); // This will now return 1280x720
+    long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
+    fbp = (uint16_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+
+    // Draw a big white square in the middle
+    for (int y = 100; y < 200; y++) {
+        for (int x = 100; x < 200; x++) {
+            fbp[y * vinfo.xres + x] = 0xFFFF;
+        }
+    }
+    
+    munmap(fbp, screensize);
+    close(fbfd);
+    
     return 0;
 }
