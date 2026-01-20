@@ -20,21 +20,6 @@ jobs:
           mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
           mipsel-linux-gnu-gcc -static wrapper.c -o rkgame
 
-      - name: Build fbDOOM (Direct Framebuffer)
-        run: |
-          git clone https://github.com/maximevince/fbDOOM.git
-          cd fbDOOM/fbdoom
-          
-          # 1. Modify Makefile: Remove SDL linking and add static flags
-          sed -i 's/LIBS=-lSDL//g' Makefile
-          sed -i 's/CFLAGS=-O2/CFLAGS=-O2 -static -DNONET/g' Makefile
-          
-          # 2. Build using the MIPS cross-compiler
-          # We pass the CC override directly to make
-          make CC=mipsel-linux-gnu-gcc LDFLAGS="-static"
-          
-          mv fbdoom ../../fbdoom_mips
-
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
