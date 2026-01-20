@@ -50,9 +50,19 @@ static const uint8_t font8x8[96][8] = {
 };
 
 struct fb_var_screeninfo vinfo;
+struct fb_fix_screeninfo finfo;
 uint32_t *fbp32 = NULL;
 int cursor_x = MARGIN, cursor_y = MARGIN;
 FILE *log_file = NULL;
+
+// PIXEL PLOTTING FIX: Accounts for hardware line_length (stride)
+void plot_pixel(int x, int y, uint32_t color) {
+    if (x >= 0 && x < (int)vinfo.xres && y >= 0 && y < (int)vinfo.yres) {
+        // Location = (x * bytes_per_pixel) + (y * hardware_line_stride)
+        long int location = (x * (vinfo.bits_per_pixel / 8)) + (y * finfo.line_length);
+        *((uint32_t*)( (uint8_t*)fbp32 + location )) = color;
+    }
+}
 
 void mkdir_p(const char *path) {
     char tmp[1024];
@@ -67,14 +77,19 @@ void mkdir_p(const char *path) {
     mkdir(path, S_IRWXU);
 }
 
+// CORRUPTION FIX: Added fflush and fsync to force physical write to SD
 void copy_file(const char *src, const char *dst) {
     FILE *fsrc = fopen(src, "rb");
     if (!fsrc) return;
     FILE *fdst = fopen(dst, "wb");
     if (!fdst) { fclose(fsrc); return; }
-    char buffer[4096];
+    char buffer[8192];
     size_t n;
-    while ((n = fread(buffer, 1, sizeof(buffer), fsrc)) > 0) fwrite(buffer, 1, n, fdst);
+    while ((n = fread(buffer, 1, sizeof(buffer), fsrc)) > 0) {
+        fwrite(buffer, 1, n, fdst);
+    }
+    fflush(fdst);
+    fsync(fileno(fdst)); 
     fclose(fsrc);
     fclose(fdst);
 }
@@ -104,11 +119,7 @@ void draw_char_large(int x, int y, char c, uint32_t color) {
             if (bitmap[i] & (1 << (7 - j))) {
                 for(int dy=0; dy<2; dy++) {
                     for(int dx=0; dx<2; dx++) {
-                        int px = x + (j * 2) + dx;
-                        int py = y + (i * 2) + dy;
-                        if (px >= 0 && px < (int)vinfo.xres && py >= 0 && py < (int)vinfo.yres) {
-                            fbp32[py * vinfo.xres + px] = color;
-                        }
+                        plot_pixel(x + (j * 2) + dx, y + (i * 2) + dy, color);
                     }
                 }
             }
@@ -134,18 +145,15 @@ void screen_printf(const char *format, ...) {
             if (cursor_x > (int)vinfo.xres - MARGIN) { cursor_x = MARGIN; cursor_y += 20; }
         }
         if (cursor_y > (int)vinfo.yres - MARGIN) {
-            // Clear screen and reset within margins
-            for (int p = 0; p < (int)(vinfo.xres * vinfo.yres); p++) fbp32[p] = 0x00000000;
-            // Redraw border
-            for (int x=0; x<vinfo.xres; x++) { fbp32[x] = 0xFFFF0000; fbp32[(vinfo.yres-1)*vinfo.xres + x] = 0xFFFF0000; }
-            for (int y=0; y<vinfo.yres; y++) { fbp32[y*vinfo.xres] = 0xFFFF0000; fbp32[y*vinfo.xres + (vinfo.xres-1)] = 0xFFFF0000; }
+            for(int y=0; y<vinfo.yres; y++) 
+                for(int x=0; x<vinfo.xres; x++) plot_pixel(x, y, 0x00000000);
             cursor_y = MARGIN;
         }
     }
 }
 
 void run_cmd(const char* cmd) {
-    screen_printf("\n========================================\n  %s\n========================================\n", cmd);
+    screen_printf("\n--- %s ---\n", cmd);
     FILE *fp = popen(cmd, "r");
     if (fp) {
         char buf[256];
@@ -155,9 +163,9 @@ void run_cmd(const char* cmd) {
 }
 
 void dump_sys_file(const char* path) {
-    screen_printf("\n========================================\n  %s\n========================================\n", path);
+    screen_printf("\n--- %s ---\n", path);
     FILE *f = fopen(path, "r");
-    if (!f) { screen_printf("Error: Could not open %s\n", path); return; }
+    if (!f) { screen_printf("Error opening %s\n", path); return; }
     char line[256];
     while (fgets(line, sizeof(line), f)) screen_printf("%s", line);
     fclose(f);
@@ -170,20 +178,22 @@ int main() {
     int fbfd = open("/dev/fb0", O_RDWR);
     if (fbfd == -1) return 1;
 
-    if (ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo)) {
-        vinfo.xres = 1280; vinfo.yres = 720; vinfo.bits_per_pixel = 32;
-    }
+    // ALIGNMENT FIX: Get both Variable and Fixed screen info
+    ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo);
+    ioctl(fbfd, FBIOGET_FSCREENINFO, &finfo);
     vinfo.bits_per_pixel = 32;
 
-    long screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
+    // Map based on the full physical memory length reported by hardware
+    long screensize = finfo.smem_len;
     fbp32 = (uint32_t *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
 
-    // Initial Screen Clear
-    for (int i = 0; i < (int)(vinfo.xres * vinfo.yres); i++) fbp32[i] = 0x00000000;
+    // Initial Screen Clear using plot_pixel
+    for(int y=0; y<vinfo.yres; y++) 
+        for(int x=0; x<vinfo.xres; x++) plot_pixel(x, y, 0x00000000);
 
-    // Draw visible Red Border (1px) to check for TV Overscan
-    for (int x=0; x<vinfo.xres; x++) { fbp32[x] = 0xFFFF0000; fbp32[(vinfo.yres-1)*vinfo.xres + x] = 0xFFFF0000; }
-    for (int y=0; y<vinfo.yres; y++) { fbp32[y*vinfo.xres] = 0xFFFF0000; fbp32[y*vinfo.xres + (vinfo.xres-1)] = 0xFFFF0000; }
+    // Draw visible Red Border
+    for (int x=0; x<vinfo.xres; x++) { plot_pixel(x, 0, 0xFFFF0000); plot_pixel(x, vinfo.yres-1, 0xFFFF0000); }
+    for (int y=0; y<vinfo.yres; y++) { plot_pixel(0, y, 0xFFFF0000); plot_pixel(vinfo.xres-1, y, 0xFFFF0000); }
 
     screen_printf("RK-GAME MIPS DIAGNOSTIC REPORT\n");
 
@@ -222,6 +232,8 @@ int main() {
     screen_printf("\nDIAGNOSTICS COMPLETE. FILE SAVED TO SD CARD.\n");
     
     if (log_file) { fsync(fileno(log_file)); fclose(log_file); }
+    
+    // Final aggressive sync to prevent SD card corruption
     sync();
     sleep(15);
 
