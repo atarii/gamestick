@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <dirent.h>
+#include <errno.h>
 
 #define MARGIN 60  // Safe area to prevent text cutoff on TVs
 
@@ -77,36 +78,61 @@ void mkdir_p(const char *path) {
     mkdir(path, S_IRWXU);
 }
 
-// CORRUPTION FIX: Added fflush and fsync to force physical write to SD
+// FAT32 SAFE COPY: Dereferences links and forces sync
 void copy_file(const char *src, const char *dst) {
+    struct stat st;
+    // Use stat instead of lstat to follow symlinks to their source
+    if (stat(src, &st) != 0) return;
+    if (!S_ISREG(st.st_mode)) return; // Skip sockets/pipes/dirs
+
     FILE *fsrc = fopen(src, "rb");
     if (!fsrc) return;
+    
+    // Open with "c" to try and force cached writes to commit
     FILE *fdst = fopen(dst, "wb");
     if (!fdst) { fclose(fsrc); return; }
+
     char buffer[8192];
     size_t n;
     while ((n = fread(buffer, 1, sizeof(buffer), fsrc)) > 0) {
         fwrite(buffer, 1, n, fdst);
     }
+    
     fflush(fdst);
-    fsync(fileno(fdst)); 
-    fclose(fsrc);
+    fsync(fileno(fdst)); // Force physical write
     fclose(fdst);
+    fclose(fsrc);
 }
 
 void copy_dir(const char *src_dir, const char *dst_dir) {
     DIR *dir = opendir(src_dir);
     if (!dir) return;
-    mkdir_p(dst_dir);
+
+    mkdir(dst_dir, S_IRWXU);
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
         char s_path[1024], d_path[1024];
         snprintf(s_path, sizeof(s_path), "%s/%s", src_dir, entry->d_name);
         snprintf(d_path, sizeof(d_path), "%s/%s", dst_dir, entry->d_name);
+
         struct stat st;
-        if (lstat(s_path, &st) == 0 && S_ISDIR(st.st_mode)) copy_dir(s_path, d_path);
-        else copy_file(s_path, d_path);
+        // Follow links here so we copy the actual data to the SD card
+        if (stat(s_path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                copy_dir(s_path, d_path);
+            } else if (S_ISREG(st.st_mode)) {
+                copy_file(s_path, d_path);
+            }
+        }
+    }
+    
+    // Sync the directory metadata itself
+    int dir_fd = open(dst_dir, O_RDONLY);
+    if (dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
     }
     closedir(dir);
 }
@@ -170,7 +196,6 @@ void dump_sys_file(const char* path) {
     while (fgets(line, sizeof(line), f)) screen_printf("%s", line);
     fclose(f);
 }
-
 int main() {
     log_file = fopen("/mnt/sdcard/RK_GAME_DIAG.txt", "w");
     if (!log_file) log_file = fopen("/mnt/info.txt", "w");
@@ -196,7 +221,10 @@ int main() {
     for (int y=0; y<vinfo.yres; y++) { plot_pixel(0, y, 0xFFFF0000); plot_pixel(vinfo.xres-1, y, 0xFFFF0000); }
 
     screen_printf("RK-GAME MIPS DIAGNOSTIC REPORT\n");
-
+    
+    // Initial Sync before starting
+    sync();
+    
     // 1. Live Info
     run_cmd("uname -a");
     run_cmd("df -h");
@@ -207,7 +235,7 @@ int main() {
     
     // 2. Snapshot Folders
     screen_printf("\nBacking up /etc/ ...\n");
-    copy_dir("/etc/", "/mnt/sdcard/diag_dump/etc");
+    copy_dir("/etc", "/mnt/sdcard/diag_dump/etc");
     
     screen_printf("Backing up /proc/device-tree/ ...\n");
     copy_dir("/proc/device-tree", "/mnt/sdcard/diag_dump/device-tree");
@@ -229,12 +257,19 @@ int main() {
     // 4. Framebuffer info
     dump_sys_file("/sys/class/graphics/fb0/modes");
 
-    screen_printf("\nDIAGNOSTICS COMPLETE. FILE SAVED TO SD CARD.\n");
+    screen_printf("\nDIAGNOSTICS COMPLETE.\n");
     
     if (log_file) { fsync(fileno(log_file)); fclose(log_file); }
-    
-    // Final aggressive sync to prevent SD card corruption
+
     sync();
+    // Force the kernel to drop caches to ensure SD card is updated
+    int fd = open("/proc/sys/vm/drop_caches", O_WRONLY);
+    if (fd >= 0) {
+        write(fd, "3", 1);
+        close(fd);
+    }
+
+    screen_printf("\nSYNC TO SD CARD COMPLETE.\n");
     sleep(15);
 
     munmap(fbp32, screensize);
