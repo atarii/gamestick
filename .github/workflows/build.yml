@@ -17,7 +17,8 @@ jobs:
       - name: Build Diagnostics and Wrapper
         run: |
           mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
-          mipsel-linux-gnu-gcc -static wrapper.c -o rkgame
+          mipsel-linux-gnu-gcc -static wrapper.c -o wrapper
+          mipsel-linux-gnu-gcc -static framebuffer.c -o framebuffer
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
