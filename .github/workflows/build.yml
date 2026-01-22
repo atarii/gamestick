@@ -14,11 +14,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-mipsel-linux-gnu make git
 
-      - name: Build Diagnostics and Wrapper
+      - name: Compile all C files for MIPS
         run: |
-          mipsel-linux-gnu-gcc -static sysinfo.c -o sysinfo_mips
-          mipsel-linux-gnu-gcc -static wrapper.c -o wrapper
-          mipsel-linux-gnu-gcc -static framebuffer.c -o framebuffer
+          for file in *.c; do
+            # Extract the name without .c (e.g., sysinfo.c -> sysinfo)
+            filename=$(basename "$file" .c)
+            
+            echo "Compiling $file..."
+            
+            # Compile with -static for the MIPS handheld
+            mipsel-linux-gnu-gcc -static "$file" -o "${filename}_mips"
+          done
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mips-binaries
+          path: "*_mips"
+
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
